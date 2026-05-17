@@ -81,7 +81,7 @@ class Settings:
     price_fetch_delay_sec: float = 12.5
 
     # ── Correlation Parameters ─────────────────────────────────
-    correlation_lookback_periods: tuple = (90, 252)   # 90-day and 1-year
+    correlation_lookback_periods: tuple = (90,)   # 90-day and 1-year
     correlation_min_overlap_pct: float = 0.8          # require 80% date overlap
 
     # ── S&P 500 Source ────────────────────────────────────────
