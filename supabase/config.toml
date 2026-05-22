@@ -1,0 +1,19 @@
+# Supabase project configuration.
+# Per-function settings override platform defaults.
+#
+# Phase 5: Edge Functions are anon-key gated — same trust posture as REST API
+# calls from iOS. We disable JWT verification at the gateway so the iOS
+# URLSession's Authorization header (which can carry an expired user JWT or
+# nothing at all) never causes a 401 "Invalid JWT" rejection. The `apikey`
+# header still needs to be present and valid; that's what gates access.
+#
+# When you add monetization gates later, flip `verify_jwt = true` on the
+# affected functions and the gateway will require a valid user JWT.
+
+project_id = "fiuaznpaogdzuxunnrhv"
+
+[functions.quotes]
+verify_jwt = false
+
+[functions.aggregates]
+verify_jwt = false
