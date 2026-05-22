@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS watchlists (
   user_id            uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   ticker             text        NOT NULL,
   company_name       text        NOT NULL,
-  sector             text,
   group_name         text        NOT NULL DEFAULT 'My Watchlist',
   sort_order         int         NOT NULL DEFAULT 0,
   added_at           timestamptz NOT NULL DEFAULT now(),
@@ -30,9 +29,11 @@ CREATE INDEX IF NOT EXISTS watchlists_user_active_idx
   ON watchlists (user_id, sort_order)
   WHERE deleted_at IS NULL;
 
--- Hot path for "is this user already watching this ticker?" (server-side
--- features like auto-suggesting alerts for watched tickers).
-CREATE INDEX IF NOT EXISTS watchlists_user_ticker_idx
+-- One live row per (user, ticker). Partial so a soft-deleted row doesn't
+-- block re-adding the same ticker later. Also serves as the hot path for
+-- "is this user already watching this ticker?" and is the conflict target
+-- for iOS upserts.
+CREATE UNIQUE INDEX IF NOT EXISTS watchlists_user_ticker_idx
   ON watchlists (user_id, ticker)
   WHERE deleted_at IS NULL;
 
@@ -51,3 +52,4 @@ COMMENT ON COLUMN watchlists.client_updated_at IS
   'Last write timestamp from iOS. Used for last-write-wins conflict resolution.';
 COMMENT ON COLUMN watchlists.deleted_at IS
   'Soft-delete marker. Non-null = removed. Prevents reinstalled clients from resurrecting deleted rows.';
+  
