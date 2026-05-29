@@ -36,13 +36,13 @@ class SupabaseClient:
     # ── S&P 500 Constituents ──────────────────────────────────
 
     def get_sp500_tickers(self) -> list[dict]:
-        resp = self._client.table("sp500_constituents").select("*").execute()
+        resp = self._client.table("stock_sp500_constituents").select("*").execute()
         return resp.data
 
     def upsert_sp500_constituents(self, rows: list[dict]) -> None:
         if not rows:
             return
-        self._client.table("sp500_constituents").upsert(
+        self._client.table("stock_sp500_constituents").upsert(
             rows, on_conflict="ticker"
         ).execute()
         logger.info(f"Upserted {len(rows)} S&P 500 constituents")
@@ -50,7 +50,7 @@ class SupabaseClient:
     def mark_removed_constituents(self, removed_tickers: list[str]) -> None:
         if not removed_tickers:
             return
-        self._client.table("sp500_constituents").update(
+        self._client.table("stock_sp500_constituents").update(
             {"is_active": False, "removed_at": datetime.utcnow().isoformat()}
         ).in_("ticker", removed_tickers).execute()
         logger.info(f"Marked {len(removed_tickers)} tickers as removed")
@@ -263,12 +263,6 @@ class SupabaseClient:
         self._client.table("stock_correlation").delete().lt(
             "business_date", before_date
         ).execute()
-
-    # ── Watchlist ─────────────────────────────────────────────
-
-    def get_all_watched_tickers(self) -> list[str]:
-        resp = self._client.table("watchlist_stocks").select("ticker").execute()
-        return list({row["ticker"] for row in resp.data}) if resp.data else []
 
     # ── Generic ───────────────────────────────────────────────
 

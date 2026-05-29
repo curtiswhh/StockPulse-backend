@@ -152,7 +152,7 @@ async function readCache(
   adjusted: boolean,
 ): Promise<CacheRow | null> {
   const { data, error } = await admin()
-    .from("aggregate_cache")
+    .from("polygon_aggregate_cache")
     .select("ticker, from_date, to_date, adjusted, bars, fetched_at")
     .eq("ticker", ticker)
     .eq("adjusted", adjusted)
@@ -181,7 +181,7 @@ async function upsertCache(
     fetched_at: new Date().toISOString(),
   };
   const { error } = await admin()
-    .from("aggregate_cache")
+    .from("polygon_aggregate_cache")
     .upsert(row, { onConflict: "ticker,adjusted" });
   if (error) throw error;
 }

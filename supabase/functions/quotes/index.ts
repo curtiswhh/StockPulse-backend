@@ -118,7 +118,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 /// by ticker. Tickers without a row (never been quoted) are simply absent.
 async function readAllCached(tickers: string[]): Promise<Record<string, MarketQuoteDTO>> {
   const { data, error } = await admin()
-    .from("quote_cache")
+    .from("polygon_quote_cache")
     .select("ticker, payload")
     .in("ticker", tickers);
 
@@ -306,7 +306,7 @@ async function fetchSnapshotsSafe(
 /// of opening the app.
 async function fetchPrevCloses(tickers: string[]): Promise<Record<string, StockPriceRow[]>> {
   const { data, error } = await admin()
-    .from("aggregate_cache")
+    .from("polygon_aggregate_cache")
     .select("ticker, bars")
     .in("ticker", tickers)
     .eq("adjusted", true);
@@ -504,7 +504,7 @@ async function upsertCache(dtos: MarketQuoteDTO[]): Promise<number> {
     payload: dto,
     fetched_at: new Date().toISOString(),
   }));
-  const { error } = await admin().from("quote_cache").upsert(rows, { onConflict: "ticker" });
+  const { error } = await admin().from("polygon_quote_cache").upsert(rows, { onConflict: "ticker" });
   if (error) throw error;
   return writable.length;
 }
@@ -537,7 +537,7 @@ async function warmAggregateCache(tickers: string[]): Promise<void> {
   // nothing — e.g. ticker sent in wrong format before BRK-B→BRK.B fix).
   // Selecting only the count keeps the payload small.
   const { data, error } = await admin()
-    .from("aggregate_cache")
+    .from("polygon_aggregate_cache")
     .select("ticker, from_date, to_date, fetched_at, bars")
     .in("ticker", tickers)
     .eq("adjusted", true);
@@ -593,7 +593,7 @@ async function warmAggregateCache(tickers: string[]): Promise<void> {
       if (bars.length === 0) return { ticker, bars: 0 };
 
       const { error: upErr } = await admin()
-        .from("aggregate_cache")
+        .from("polygon_aggregate_cache")
         .upsert({
           ticker,
           from_date: fetchFrom,

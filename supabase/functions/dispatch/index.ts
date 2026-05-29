@@ -81,7 +81,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Limit is a soft guard against runaway batches — 200 covers typical
     // load. Anything beyond gets picked up next minute.
     const { data: pending, error: pendingErr } = await admin()
-      .from("notifications")
+      .from("user_notifications")
       .select("id, user_id, kind, payload, scheduled_for, created_at")
       .eq("status", "pending")
       .lte("scheduled_for", nowIso)
@@ -124,7 +124,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const sentTodayByUser = new Map<string, number>();
     for (const uid of userIds) {
       const { count, error: cErr } = await admin()
-        .from("notifications")
+        .from("user_notifications")
         .select("*", { count: "exact", head: true })
         .eq("user_id", uid)
         .eq("status", "sent")
@@ -238,7 +238,7 @@ async function applyResult(
   switch (result.kind) {
     case "sent": {
       const { error } = await admin()
-        .from("notifications")
+        .from("user_notifications")
         .update({ status: "sent", sent_at: new Date().toISOString() })
         .eq("id", notificationId);
       if (error) console.error(`[dispatch] mark sent failed:`, error);
@@ -280,7 +280,7 @@ async function markDropped(notificationId: string, reason: string): Promise<void
   // Read-modify-write because we want to preserve the original payload
   // while annotating it. Single row, single tick — fine.
   const { data, error: readErr } = await admin()
-    .from("notifications")
+    .from("user_notifications")
     .select("payload")
     .eq("id", notificationId)
     .single();
@@ -292,7 +292,7 @@ async function markDropped(notificationId: string, reason: string): Promise<void
   const newPayload = { ...(data?.payload ?? {}), _drop_reason: reason };
 
   const { error: updErr } = await admin()
-    .from("notifications")
+    .from("user_notifications")
     .update({ status: "dropped", payload: newPayload })
     .eq("id", notificationId);
   if (updErr) console.error(`[dispatch] markDropped update failed:`, updErr);

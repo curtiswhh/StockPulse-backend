@@ -58,7 +58,7 @@ let planLimitsCache: Map<string, PlanLimits> | null = null;
 async function loadPlanLimits(): Promise<Map<string, PlanLimits>> {
   if (planLimitsCache) return planLimitsCache;
   const { data, error } = await admin()
-    .from("plans")
+    .from("user_plans")
     .select("name, limits");
   if (error) throw new Error(`plans load failed: ${error.message}`);
   const map = new Map<string, PlanLimits>();
@@ -94,7 +94,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // queries and merge in TypeScript. Cost is one extra round-trip per
     // tick (a few ms); avoids touching PR 1's FK structure.
     const { data: rawAlerts, error: alertsErr } = await admin()
-      .from("alerts")
+      .from("user_alerts")
       .select("id, user_id, ticker, condition, condition_v, is_critical, cooldown_s, last_fired_at")
       .eq("enabled", true);
 
@@ -176,7 +176,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (snapshotRows.length > 0) {
       const { error: snapErr } = await admin()
-        .from("price_snapshots")
+        .from("polygon_price_snapshots")
         .upsert(snapshotRows, { onConflict: "ticker,ts" });
       if (snapErr) throw new Error(`price_snapshots upsert failed: ${snapErr.message}`);
     }
@@ -260,16 +260,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // 6. Bulk-persist
     // ────────────────────────────────────────────────────────────────
     if (fires.length > 0) {
-      const { error: firesErr } = await admin().from("alert_fires").insert(fires);
+      const { error: firesErr } = await admin().from("user_alert_fires").insert(fires);
       if (firesErr) throw new Error(`alert_fires insert failed: ${firesErr.message}`);
     }
     if (notifications.length > 0) {
-      const { error: notifErr } = await admin().from("notifications").insert(notifications);
+      const { error: notifErr } = await admin().from("user_notifications").insert(notifications);
       if (notifErr) throw new Error(`notifications insert failed: ${notifErr.message}`);
     }
     if (alertIdsToBumpFireTime.length > 0) {
       const { error: updErr } = await admin()
-        .from("alerts")
+        .from("user_alerts")
         .update({ last_fired_at: nowIso })
         .in("id", alertIdsToBumpFireTime);
       if (updErr) throw new Error(`alerts update failed: ${updErr.message}`);
