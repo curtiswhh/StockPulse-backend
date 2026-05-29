@@ -110,6 +110,8 @@ export interface ApnsPayload {
   data?: Record<string, unknown>;
   /// 'production' (App Store / TF release) or 'sandbox' (debug / TF beta).
   env: "production" | "sandbox";
+  /// APNs topic (the app's bundle ID). Falls back to APNS_BUNDLE_ID env.
+  topic?: string;
 }
 
 export type ApnsResult =
@@ -149,7 +151,7 @@ export async function sendApns(token: string, payload: ApnsPayload): Promise<Apn
       method: "POST",
       headers: {
         "authorization": `bearer ${jwt}`,
-        "apns-topic": APNS_BUNDLE_ID(),
+        "apns-topic": payload.topic ?? APNS_BUNDLE_ID(),
         "apns-push-type": "alert",
         "apns-priority": "10",        // immediate delivery; 5 = throttled
         "content-type": "application/json",

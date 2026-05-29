@@ -59,6 +59,7 @@ interface UserPushInfo {
   id: string;
   apns_token: string | null;
   apns_env: "production" | "sandbox" | null;
+  apns_bundle_id: string | null;
   daily_cap: number;
 }
 
@@ -103,7 +104,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const userIds = [...new Set(queue.map((n) => n.user_id))];
     const { data: userRows, error: usersErr } = await admin()
       .from("users")
-      .select("id, apns_token, apns_env, daily_cap")
+      .select("id, apns_token, apns_env, apns_bundle_id, daily_cap")
       .in("id", userIds);
     if (usersErr) throw new Error(`users load failed: ${usersErr.message}`);
 
@@ -174,6 +175,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       const result = await sendApns(u.apns_token, {
         ...apnsPayload,
         env: u.apns_env ?? "production",
+        topic: u.apns_bundle_id ?? undefined,
       });
 
       // 4d. Map result → status transition.
