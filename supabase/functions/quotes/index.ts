@@ -241,9 +241,9 @@ async function handleQuotes(tickers: string[], _force: boolean): Promise<Record<
 ///      derives meaningful fields from aggregate_cache instead.
 function isDegeneratePayload(p: MarketQuoteDTO): boolean {
   return p.dailyChange === 0 &&
-         p.dailyChangePct === 0 &&
-         p.lastPrice === p.previousClose &&
-         p.latestBusinessDate === "";
+    p.dailyChangePct === 0 &&
+    p.lastPrice === p.previousClose &&
+    p.latestBusinessDate === "";
 }
 
 /// Re-derive a degenerate quote's price/return fields from aggregate_cache.
@@ -359,9 +359,10 @@ function businessDateNY(ms: number): string {
 /// ticker's last few cached closes. Preference order:
 ///
 ///   HAPPY PATH — Polygon snapshot has live data with a non-zero daily move:
-///     Use snapshot fields directly. lastPrice / previousClose / dailyChange /
-///     dailyChangePct all come from the same Polygon response, guaranteed
-///     self-consistent. `aggregate_cache` is NOT read. source: "live".
+///     Use snapshot lastPrice + prevDay.c; compute dailyChange / dailyChangePct
+///     locally as (lastPrice - prevDay.c) so the move is always anchored on
+///     the prior close (Polygon's own todaysChange uses a different anchor).
+///     `aggregate_cache` is NOT read. source: "live".
 ///
 ///   RESET-WINDOW FALLBACK — Polygon has cleared the snapshot for the next
 ///   session but no trades have happened yet (`todaysChange == 0` AND
@@ -397,8 +398,8 @@ function fuseQuote(
       ticker,
       lastPrice: live,
       previousClose: prevDayClose,
-      dailyChange: polyChange.change,
-      dailyChangePct: polyChange.changePct,
+      dailyChange: live - prevDayClose,
+      dailyChangePct: (live / prevDayClose - 1) * 100,
       latestBusinessDate: snapBD ?? "",
       previousBusinessDate: "",
       quoteTimestamp: snapshotBestTimestampISO(snap!),
@@ -455,7 +456,7 @@ function fuseQuote(
   const previousBD = prevRows[1]?.business_date ?? "";
 
   if (supabaseLatestClose && supabaseLatestClose > 0 &&
-      supabasePrevClose && supabasePrevClose > 0) {
+    supabasePrevClose && supabasePrevClose > 0) {
     return {
       ticker,
       lastPrice: supabaseLatestClose,
@@ -587,7 +588,7 @@ async function warmAggregateCache(tickers: string[]): Promise<void> {
       const e = existing.get(ticker);
       const useExisting = e !== undefined && e.hasBars;
       const fetchFrom = useExisting ? (e!.from_date < targetFrom ? e!.from_date : targetFrom) : targetFrom;
-      const fetchTo   = useExisting ? (e!.to_date   > targetTo   ? e!.to_date   : targetTo  ) : targetTo;
+      const fetchTo = useExisting ? (e!.to_date > targetTo ? e!.to_date : targetTo) : targetTo;
 
       const bars = await fetchAggregates(ticker, fetchFrom, fetchTo, true);
       if (bars.length === 0) return { ticker, bars: 0 };

@@ -95,8 +95,8 @@ export function fuseQuote(
       ticker,
       lastPrice: live,
       previousClose: prevDayClose,
-      dailyChange: polyChange.change,
-      dailyChangePct: polyChange.changePct,
+      dailyChange: live - prevDayClose,
+      dailyChangePct: (live / prevDayClose - 1) * 100,
       latestBusinessDate: snapBD ?? "",
       previousBusinessDate: "",
       quoteTimestamp: snapshotBestTimestampISO(snap!),
@@ -135,7 +135,7 @@ export function fuseQuote(
   const previousBD = prevRows[1]?.business_date ?? "";
 
   if (supabaseLatestClose && supabaseLatestClose > 0 &&
-      supabasePrevClose && supabasePrevClose > 0) {
+    supabasePrevClose && supabasePrevClose > 0) {
     return {
       ticker,
       lastPrice: supabaseLatestClose,
@@ -154,9 +154,9 @@ export function fuseQuote(
 /// Row carries no useful change signal — filtered before persisting.
 function isDegeneratePayload(p: MarketQuoteDTO): boolean {
   return p.dailyChange === 0 &&
-         p.dailyChangePct === 0 &&
-         p.lastPrice === p.previousClose &&
-         p.latestBusinessDate === "";
+    p.dailyChangePct === 0 &&
+    p.lastPrice === p.previousClose &&
+    p.latestBusinessDate === "";
 }
 
 /// Upsert fused quotes into polygon_quote_cache, skipping degenerate rows
