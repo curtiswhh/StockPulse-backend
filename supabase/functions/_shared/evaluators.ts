@@ -30,6 +30,7 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import { admin } from "./supabase_admin.ts";
+import { isIndex } from "./polygon.ts";
 
 // ============================================================
 // Types
@@ -80,9 +81,9 @@ function meetsThreshold(
   thresholdPct: number,
 ): boolean {
   const t = Math.abs(thresholdPct);
-  if (direction === "up")   return actualPct >=  t;
+  if (direction === "up") return actualPct >= t;
   if (direction === "down") return actualPct <= -t;
-  if (direction === "any")  return Math.abs(actualPct) >= t;
+  if (direction === "any") return Math.abs(actualPct) >= t;
   return false;
 }
 
@@ -97,7 +98,7 @@ function meetsThreshold(
 
 const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
   const direction = condition.direction as string;
-  const pct       = condition.pct as number | undefined;
+  const pct = condition.pct as number | undefined;
   if (typeof pct !== "number" || !Number.isFinite(pct)) return { fired: false };
   if (ctx.todaysChangePct === null) return { fired: false };
 
@@ -136,9 +137,9 @@ const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
 
 const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
   const direction = condition.direction as string;
-  const pct       = condition.pct as number | undefined;
-  const days      = condition.days as number | undefined;
-  if (typeof pct !== "number"  || !Number.isFinite(pct))  return { fired: false };
+  const pct = condition.pct as number | undefined;
+  const days = condition.days as number | undefined;
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return { fired: false };
   if (typeof days !== "number" || !Number.isFinite(days) || days < 1) return { fired: false };
 
   // Step 1: resolve the business date N days before today.
@@ -161,19 +162,11 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
     return { fired: false };
   }
 
-  // Step 2: pull the close on that date.
-  const { data: priceRows, error: priceErr } = await admin()
-    .from("stock_price")
-    .select("close")
-    .eq("ticker", ticker)
-    .eq("business_date", refDate)
-    .maybeSingle();
-
-  if (priceErr) {
-    console.error(`[evalPriceMoveNd] stock_price lookup failed for ${ticker} ${refDate}:`, priceErr);
-    return { fired: false };
-  }
-  const refPrice = priceRows?.close as number | undefined;
+  // Step 2: pull the close on that date. Indices have no stock_price rows,
+  // so resolve their reference from the cached daily bars instead.
+  const refPrice = isIndex(ticker)
+    ? await indexCloseOnDate(ticker, refDate)
+    : await stockCloseOnDate(ticker, refDate);
   if (!refPrice || refPrice <= 0) return { fired: false };
 
   const movePct = ((ctx.currentPrice - refPrice) / refPrice) * 100;
@@ -193,6 +186,52 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
     },
   };
 };
+
+/// Stock reference close on a business date, read from stock_price.
+async function stockCloseOnDate(ticker: string, refDate: string): Promise<number | undefined> {
+  const { data, error } = await admin()
+    .from("stock_price")
+    .select("close")
+    .eq("ticker", ticker)
+    .eq("business_date", refDate)
+    .maybeSingle();
+  if (error) {
+    console.error(`[evalPriceMoveNd] stock_price lookup failed for ${ticker} ${refDate}:`, error);
+    return undefined;
+  }
+  return data?.close as number | undefined;
+}
+
+/// Index reference close on a business date, read from the cached daily
+/// bars (indices have no stock_price rows). Matches the bar whose NY
+/// business date equals refDate.
+async function indexCloseOnDate(ticker: string, refDate: string): Promise<number | undefined> {
+  const { data, error } = await admin()
+    .from("polygon_aggregate_cache")
+    .select("bars")
+    .eq("ticker", ticker)
+    .eq("adjusted", true)
+    .maybeSingle();
+  if (error) {
+    console.error(`[evalPriceMoveNd] aggregate_cache lookup failed for ${ticker}:`, error);
+    return undefined;
+  }
+  const bars = (data?.bars ?? []) as { c: number; t: number }[];
+  const match = bars.find((b) => businessDateNY(b.t) === refDate);
+  return match?.c;
+}
+
+/// Convert an aggregate bar's epoch-ms timestamp to YYYY-MM-DD in NY.
+function businessDateNY(ms: number): string {
+  if (!ms || ms <= 0) return "";
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date(ms));
+}
 
 // ============================================================
 // The registry — adding an alert type is ONE line here
