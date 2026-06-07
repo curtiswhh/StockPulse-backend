@@ -14,6 +14,7 @@ import {
   snapshotTodaysChange,
   SnapshotDTO,
 } from "./polygon.ts";
+import { marketState } from "./market_state.ts";
 import { admin } from "./supabase_admin.ts";
 
 export interface MarketQuoteDTO {
@@ -26,6 +27,7 @@ export interface MarketQuoteDTO {
   previousBusinessDate: string;
   quoteTimestamp: string | null;
   source: "live" | "supabaseClose";
+  priceSource: "trade" | "dayClose" | "cache";
 }
 
 export interface StockPriceRow {
@@ -85,7 +87,8 @@ export function fuseQuote(
   snap: SnapshotDTO | null,
   prevRows: StockPriceRow[],
 ): MarketQuoteDTO | null {
-  const live = snap ? snapshotBestPrice(snap) : null;
+  const best = snap ? snapshotBestPrice(snap) : null;
+  const live = best?.price ?? null;
   const snapBD = snap ? snapshotBusinessDateNY(snap) : null;
   const prevDayClose = snap?.prevDay?.c ?? null;
   const polyChange = snap ? snapshotTodaysChange(snap) : null;
@@ -101,6 +104,7 @@ export function fuseQuote(
       previousBusinessDate: "",
       quoteTimestamp: snapshotBestTimestampISO(snap!),
       source: "live",
+      priceSource: best!.source,
     };
   }
 
@@ -125,6 +129,7 @@ export function fuseQuote(
         previousBusinessDate: "",
         quoteTimestamp: snapshotBestTimestampISO(snap),
         source: "live",
+        priceSource: "dayClose",
       };
     }
   }
@@ -146,6 +151,7 @@ export function fuseQuote(
       previousBusinessDate: previousBD,
       quoteTimestamp: null,
       source: "supabaseClose",
+      priceSource: "cache",
     };
   }
   return null;
@@ -160,11 +166,19 @@ function isDegeneratePayload(p: MarketQuoteDTO): boolean {
 }
 
 /// Upsert fused quotes into polygon_quote_cache, skipping degenerate rows
-/// and sorting by ticker to keep concurrent upserts deadlock-free.
+/// and sorting by ticker to keep concurrent upserts deadlock-free. While the
+/// market is open, refuses to overwrite a stored `trade` price with an
+/// incoming `dayClose` (Polygon's snapshot intermittently drops lastTrade,
+/// and day.c lags during live trading); when closed/extended, day.c is
+/// authoritative and written normally.
 export async function upsertCache(dtos: MarketQuoteDTO[]): Promise<number> {
   const writable = dtos.filter((dto) => !isDegeneratePayload(dto));
   if (writable.length === 0) return 0;
-  const sortedDtos = [...writable].sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  const guarded = marketState() === "open" ? await dropStaleDayCloses(writable) : writable;
+  if (guarded.length === 0) return 0;
+
+  const sortedDtos = [...guarded].sort((a, b) => a.ticker.localeCompare(b.ticker));
   const rows = sortedDtos.map((dto) => ({
     ticker: dto.ticker,
     payload: dto,
@@ -172,7 +186,23 @@ export async function upsertCache(dtos: MarketQuoteDTO[]): Promise<number> {
   }));
   const { error } = await admin().from("polygon_quote_cache").upsert(rows, { onConflict: "ticker" });
   if (error) throw error;
-  return writable.length;
+  return guarded.length;
+}
+
+/// Drop incoming dayClose quotes whose stored row already holds a trade price.
+async function dropStaleDayCloses(dtos: MarketQuoteDTO[]): Promise<MarketQuoteDTO[]> {
+  const dayCloseTickers = dtos.filter((d) => d.priceSource === "dayClose").map((d) => d.ticker);
+  if (dayCloseTickers.length === 0) return dtos;
+  const { data } = await admin()
+    .from("polygon_quote_cache")
+    .select("ticker, payload")
+    .in("ticker", dayCloseTickers);
+  const storedTrade = new Set(
+    ((data ?? []) as { ticker: string; payload: MarketQuoteDTO }[])
+      .filter((r) => r.payload?.priceSource === "trade")
+      .map((r) => r.ticker),
+  );
+  return dtos.filter((d) => !(d.priceSource === "dayClose" && storedTrade.has(d.ticker)));
 }
 
 /// Ensure aggregate_cache holds enough bars (≥T-2) for fuseQuote's

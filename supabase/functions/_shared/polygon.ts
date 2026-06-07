@@ -106,9 +106,14 @@ export function snapshotTodaysChange(
 /// Best-effort current price from a snapshot. Mirrors iOS's
 /// SnapshotDTO.bestPrice exactly so fused outputs match between client
 /// and server during the transition.
-export function snapshotBestPrice(snap: SnapshotDTO): number | null {
-  if (snap.lastTrade?.p && snap.lastTrade.p > 0) return snap.lastTrade.p;
-  if (snap.day?.c && snap.day.c > 0) return snap.day.c;
+export type PriceSource = "trade" | "dayClose";
+export interface BestPrice { price: number; source: PriceSource; }
+
+/// Same lastTrade→day.c preference as before, but labels the source so
+/// callers can tell a live trade from a (possibly lagging) session close.
+export function snapshotBestPrice(snap: SnapshotDTO): BestPrice | null {
+  if (snap.lastTrade?.p && snap.lastTrade.p > 0) return { price: snap.lastTrade.p, source: "trade" };
+  if (snap.day?.c && snap.day.c > 0) return { price: snap.day.c, source: "dayClose" };
   return null;
 }
 

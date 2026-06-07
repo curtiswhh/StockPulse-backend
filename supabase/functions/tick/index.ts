@@ -71,7 +71,7 @@ async function loadPlanLimits(): Promise<Map<string, PlanLimits>> {
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return preflight();
-  if (req.method !== "POST")    return errorResponse("Method not allowed", 405);
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
 
   const startedAt = Date.now();
   const now = new Date();
@@ -162,8 +162,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     for (const t of tickers) {
       const snap = snapshots[t];
       if (!snap) continue;
-      const price = snapshotBestPrice(snap);
-      if (price === null || price <= 0) continue;
+      const best = snapshotBestPrice(snap);
+      if (best === null || best.price <= 0) continue;
+      const price = best.price;
       const change = snapshotTodaysChange(snap);
       snapshotRows.push({
         ticker: t,
@@ -189,15 +190,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // snapshot carries a usable timestamp.
     const todayBusinessDate = deriveTodayBusinessDate(snapshots) ?? todayNY(now);
 
-    const fires:        Array<Record<string, unknown>> = [];
+    const fires: Array<Record<string, unknown>> = [];
     const notifications: Array<Record<string, unknown>> = [];
     const alertIdsToBumpFireTime: string[] = [];
 
     for (const alert of eligibleAlerts) {
       const snap = snapshots[alert.ticker];
       if (!snap) continue;
-      const price = snapshotBestPrice(snap);
-      if (price === null || price <= 0) continue;
+      const best = snapshotBestPrice(snap);
+      if (best === null || best.price <= 0) continue;
+      const price = best.price;
       const change = snapshotTodaysChange(snap);
 
       const evaluator = evaluators[alert.condition.type as string];
@@ -207,8 +209,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       const ctx: EvalContext = {
-        currentPrice:     price,
-        todaysChangePct:  change?.changePct ?? null,
+        currentPrice: price,
+        todaysChangePct: change?.changePct ?? null,
         todayBusinessDate,
       };
 
@@ -229,27 +231,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       fires.push({
-        alert_id:        alert.id,
-        fired_at:        nowIso,
-        trigger_price:   price,
+        alert_id: alert.id,
+        fired_at: nowIso,
+        trigger_price: price,
         reference_price: result.referencePrice ?? null,
-        move_pct:        result.movePct ?? null,
-        context:         result.context ?? {},
+        move_pct: result.movePct ?? null,
+        context: result.context ?? {},
       });
 
       notifications.push({
         user_id: alert.user_id,
-        kind:    "single",
+        kind: "single",
         payload: {
-          alert_id:        alert.id,
-          ticker:          alert.ticker,
-          condition:       alert.condition,
-          trigger_price:   price,
+          alert_id: alert.id,
+          ticker: alert.ticker,
+          condition: alert.condition,
+          trigger_price: price,
           reference_price: result.referencePrice ?? null,
-          move_pct:        result.movePct ?? null,
-          is_critical:     alert.is_critical,
+          move_pct: result.movePct ?? null,
+          is_critical: alert.is_critical,
         },
-        status:        "pending",
+        status: "pending",
         scheduled_for: nowIso,
       });
 
