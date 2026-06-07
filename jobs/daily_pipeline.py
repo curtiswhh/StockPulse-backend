@@ -21,6 +21,8 @@ WHAT THE PIPELINE DOES FOR EACH TICKER:
   Step 6: Compute rolling VaR and upsert to stock_var
   Step 7: Compute rolling per-stock volatility and upsert to stock_volatility
   Step 8: Compute rolling pairwise correlations and upsert to stock_correlation
+  Step 9: Sync index_list from config/index_list.py, then scrape index prices
+          and returns into index_price / index_return (runs in TEST + PRODUCTION)
 """
 
 import logging
@@ -30,6 +32,7 @@ from config.settings import Settings, safe_fetch_date
 from services.supabase_client import SupabaseClient
 from services.price_data_client import PriceDataClient
 from services.sp500_tracker import SP500Tracker
+from services.index_tracker import IndexTracker
 from services.var_engine import VaREngine
 from services.correlation_engine import CorrelationEngine
 from services.volatility_engine import VolatilityEngine
@@ -72,7 +75,7 @@ class DailyPipeline:
         logger.info(self.settings.describe())
 
         # ── Step 1: Refresh S&P 500 list ──────────────────────
-        logger.info("Step 1/8: Refreshing S&P 500 constituents...")
+        logger.info("Step 1/9: Refreshing S&P 500 constituents...")
         try:
             diff = await self.sp500.refresh()
         except Exception as e:
@@ -81,10 +84,10 @@ class DailyPipeline:
 
         # ── Step 2: Resolve which tickers to process ──────────
         tickers = self._resolve_tickers()
-        logger.info(f"Step 2/8: Processing {len(tickers)} tickers: {tickers[:10]}{'...' if len(tickers) > 10 else ''}")
+        logger.info(f"Step 2/9: Processing {len(tickers)} tickers: {tickers[:10]}{'...' if len(tickers) > 10 else ''}")
 
         # ── Step 3: Backfill any tickers missing data ─────────
-        logger.info("Step 3/8: Checking for tickers that need backfill...")
+        logger.info("Step 3/9: Checking for tickers that need backfill...")
         backfill = BackfillJob(
             supabase=self.supabase,
             price_client=self.price_client,
@@ -100,24 +103,28 @@ class DailyPipeline:
                 await backfill.fetch_and_compute_var(ticker)
 
         # ── Step 4: Fetch latest prices ────────────────────────
-        logger.info(f"Step 4/8: Fetching latest closing prices for {len(tickers)} tickers (up to {fetch_date})...")
+        logger.info(f"Step 4/9: Fetching latest closing prices for {len(tickers)} tickers (up to {fetch_date})...")
         await self._fetch_daily_prices(tickers, fetch_date)
 
         # ── Step 5: Compute daily returns ──────────────────────
-        logger.info(f"Step 5/8: Computing daily returns for {len(tickers)} tickers...")
+        logger.info(f"Step 5/9: Computing daily returns for {len(tickers)} tickers...")
         self._compute_returns_all(tickers)
 
         # ── Step 6: Compute VaR ───────────────────────────────
-        logger.info(f"Step 6/8: Computing VaR for {len(tickers)} tickers...")
+        logger.info(f"Step 6/9: Computing VaR for {len(tickers)} tickers...")
         await self._compute_var_all(tickers)
 
         # ── Step 7: Compute per-stock volatility ──────────────
-        logger.info(f"Step 7/8: Computing per-stock volatility for {len(tickers)} tickers...")
+        logger.info(f"Step 7/9: Computing per-stock volatility for {len(tickers)} tickers...")
         self._compute_volatility_all(tickers)
 
         # ── Step 8: Compute pairwise correlations ─────────────
-        logger.info(f"Step 8/8: Computing pairwise correlations for {len(tickers)} tickers...")
+        logger.info(f"Step 8/9: Computing pairwise correlations for {len(tickers)} tickers...")
         self._compute_correlations(tickers)
+
+        # ── Step 9: Indices (sync list → scrape price + returns) ──
+        logger.info("Step 9/9: Syncing index_list and scraping index prices/returns...")
+        await self._run_indices()
 
         logger.info(f"═══ Daily Pipeline Complete ({mode} MODE) ═══")
 
@@ -258,3 +265,22 @@ class DailyPipeline:
             )
             if corr_rows:
                 self.supabase.upsert_global_correlations(corr_rows)
+
+    async def _run_indices(self):
+        """Sync index_list from the repo file, then scrape price + returns
+        for every active index. Runs in both TEST and PRODUCTION mode."""
+        from jobs.backfill import BackfillJob
+
+        IndexTracker(self.supabase).sync()
+        symbols = self.supabase.get_active_index_symbols()
+        logger.info(f"  Processing {len(symbols)} active indices: {symbols}")
+
+        backfill = BackfillJob(
+            supabase=self.supabase,
+            price_client=self.price_client,
+            var_engine=self.var_engine,
+            settings=self.settings,
+            return_engine=self.return_engine,
+        )
+        for symbol in symbols:
+            await backfill.fetch_and_compute_index(symbol)

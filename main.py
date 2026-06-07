@@ -12,6 +12,8 @@ CLI COMMANDS (quick reference):
   python main.py --compute-returns-all           ← Daily returns only for ALL tickers (NO Polygon calls)
   python main.py --compute-correlations-all      ← Correlations only for ALL tickers (NO Polygon calls)
   python main.py --compute-volatility-all        ← Per-stock volatility only for ALL tickers (NO Polygon calls)
+  python main.py --fetch-and-compute-index-all   ← Scrape Yahoo + compute returns for ALL active indices in index_list
+  python main.py --compute-index-returns-all     ← Index returns only from existing index_price (no scrape)
   python main.py --refresh-sp500                 ← Refresh S&P 500 constituent list only
   python main.py --describe                      ← Print current config and exit
 ─────────────────────────────────────────────────────────────────────────────
@@ -103,6 +105,16 @@ async def main():
         help="Compute per-stock volatility for ALL tickers from existing data (no Polygon)",
     )
 
+    # ── Indices (yfinance scrape → index_price / index_return) ─
+    group.add_argument(
+        "--fetch-and-compute-index-all", action="store_true",
+        help="Fetch prices + compute returns for ALL active indices in index_list",
+    )
+    group.add_argument(
+        "--compute-index-returns-all", action="store_true",
+        help="Compute returns for ALL active indices from existing index_price data",
+    )
+
     # ── Utilities ─────────────────────────────────────────────
     group.add_argument(
         "--refresh-sp500", action="store_true",
@@ -169,6 +181,12 @@ async def main():
 
     elif args.compute_volatility_all:
         await backfill.compute_volatility_all()
+
+    elif args.fetch_and_compute_index_all:
+        await backfill.fetch_and_compute_index_all()
+
+    elif args.compute_index_returns_all:
+        await backfill.compute_index_returns_all()
 
     elif args.refresh_sp500:
         await sp500.refresh()

@@ -264,6 +264,91 @@ class SupabaseClient:
             "business_date", before_date
         ).execute()
 
+    # ── Index List / Price / Return ───────────────────────────
+
+    def get_index_list(self) -> list[dict]:
+        resp = self._client.table("index_list").select("*").execute()
+        return resp.data
+
+    def upsert_index_list(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        self._client.table("index_list").upsert(rows, on_conflict="symbol").execute()
+        logger.info(f"Upserted {len(rows)} index_list rows")
+
+    def mark_removed_index_symbols(self, symbols: list[str], removed_at: str) -> None:
+        if not symbols:
+            return
+        self._client.table("index_list").update(
+            {"is_active": False, "removed_at": removed_at}
+        ).in_("symbol", symbols).execute()
+        logger.info(f"Marked {len(symbols)} index symbols as removed")
+
+    def get_active_index_symbols(self) -> list[str]:
+        resp = (
+            self._client.table("index_list")
+            .select("symbol")
+            .eq("is_active", True)
+            .execute()
+        )
+        return sorted(r["symbol"] for r in resp.data) if resp.data else []
+
+    def get_latest_index_price_date(self, ticker: str) -> date | None:
+        resp = (
+            self._client.table("index_price")
+            .select("business_date")
+            .eq("ticker", ticker)
+            .order("business_date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return date.fromisoformat(resp.data[0]["business_date"])
+        return None
+
+    def upsert_index_price(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        for i in range(0, len(rows), 1000):
+            chunk = rows[i : i + 1000]
+            self._client.table("index_price").upsert(
+                chunk, on_conflict="ticker,business_date"
+            ).execute()
+        logger.info(f"Upserted {len(rows)} index_price rows")
+
+    def get_full_index_price_history(self, ticker: str) -> list[dict]:
+        """Fetch ALL index price history for a ticker, sorted ascending by date."""
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            resp = (
+                self._client.table("index_price")
+                .select("business_date, close, adj_close")
+                .eq("ticker", ticker)
+                .order("business_date", desc=False)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            if not resp.data:
+                break
+            all_rows.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            offset += page_size
+        logger.info(f"  {ticker}: fetched {len(all_rows)} total index_price rows from Supabase")
+        return all_rows
+
+    def upsert_index_returns(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        for i in range(0, len(rows), 1000):
+            chunk = rows[i : i + 1000]
+            self._client.table("index_return").upsert(
+                chunk, on_conflict="ticker,business_date"
+            ).execute()
+        logger.info(f"Upserted {len(rows)} index_return rows")
+
     # ── Generic ───────────────────────────────────────────────
 
     def rpc(self, function_name: str, params: dict | None = None) -> Any:

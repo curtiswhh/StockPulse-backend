@@ -295,3 +295,72 @@ class BackfillJob:
                 self.supabase.upsert_global_correlations(corr_rows)
 
         logger.info(f"Correlation computation complete — {len(all_prices)} tickers processed.")
+
+    # ══════════════════════════════════════════════════════════
+    # INDICES (yfinance scrape → index_price / index_return)
+    # Driven by the index_list table (gold source: config/index_list.py)
+    # ══════════════════════════════════════════════════════════
+
+    async def fetch_and_compute_index(self, ticker: str):
+        """Fetch prices + compute returns for ONE index symbol (e.g. '^GSPC')."""
+        logger.info(f"[fetch-and-compute-index] {ticker}: starting...")
+        today = safe_fetch_date()
+        earliest_needed = today - timedelta(days=self.settings.var_max_backfill_days + 30)
+        latest_in_db = self.supabase.get_latest_index_price_date(ticker)
+
+        if latest_in_db and latest_in_db >= today - timedelta(days=5):
+            from_date = latest_in_db + timedelta(days=1)
+            logger.info(f"  {ticker}: filling gap from {from_date}")
+        else:
+            from_date = earliest_needed
+            logger.info(f"  {ticker}: full fetch from {from_date}")
+
+        current_start = from_date
+        all_bars: list[dict] = []
+        while current_start <= today:
+            chunk_end = min(current_start + timedelta(days=365), today)
+            bars = await self.price_client.get_daily_bars(ticker, current_start, chunk_end)
+            all_bars.extend(bars)
+            current_start = chunk_end + timedelta(days=1)
+
+        if not all_bars:
+            logger.warning(f"  {ticker}: no data returned from any source")
+            return
+        self.supabase.upsert_index_price(all_bars)
+        logger.info(f"  {ticker}: loaded {len(all_bars)} daily bars")
+
+        await self.compute_index_returns(ticker)
+
+    async def fetch_and_compute_index_all(self):
+        """Fetch prices + compute returns for ALL active symbols in index_list.
+        CLI: python main.py --fetch-and-compute-index-all"""
+        symbols = self.supabase.get_active_index_symbols()
+        logger.info(f"[fetch-and-compute-index-all] Processing {len(symbols)} indices: {symbols}")
+        for i, symbol in enumerate(symbols):
+            logger.info(f"[{i+1}/{len(symbols)}] {symbol}")
+            await self.fetch_and_compute_index(symbol)
+        logger.info(f"Index fetch + returns complete — {len(symbols)} indices processed.")
+
+    async def compute_index_returns(self, ticker: str):
+        """Compute daily returns for ONE index from existing index_price data."""
+        if self.return_engine is None:
+            logger.error("ReturnEngine not provided — cannot compute index returns")
+            return
+        prices = self.supabase.get_full_index_price_history(ticker)
+        if len(prices) < 2:
+            logger.warning(f"  {ticker}: only {len(prices)} prices — skipping returns")
+            return
+        rows = self.return_engine.compute_daily_returns(ticker=ticker, prices=prices)
+        if rows:
+            self.supabase.upsert_index_returns(rows)
+            logger.info(f"  {ticker}: upserted {len(rows)} index_return rows")
+
+    async def compute_index_returns_all(self):
+        """Compute daily returns for ALL active indices from existing data.
+        CLI: python main.py --compute-index-returns-all"""
+        symbols = self.supabase.get_active_index_symbols()
+        logger.info(f"[compute-index-returns-all] Processing {len(symbols)} indices: {symbols}")
+        for i, symbol in enumerate(symbols):
+            logger.info(f"[{i+1}/{len(symbols)}] {symbol}")
+            await self.compute_index_returns(symbol)
+        logger.info(f"Index return computation complete — {len(symbols)} indices processed.")
