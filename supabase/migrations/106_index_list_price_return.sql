@@ -56,7 +56,6 @@ INSERT INTO index_list (symbol, name, region) VALUES
     ('^STOXX50E', 'EURO STOXX 50', 'Europe'),
     ('^N100', 'Euronext 100 Index', 'Europe'),
     ('^BFX', 'BEL 20', 'Europe'),
-    ('MOEX.ME', 'Moscow Exchange MICEX-RTS', 'Europe'),
     ('^HSI', 'HANG SENG INDEX', 'Asia'),
     ('^STI', 'STI Index', 'Asia'),
     ('^AXJO', 'S&P/ASX 200', 'Asia'),
@@ -70,10 +69,8 @@ INSERT INTO index_list (symbol, name, region) VALUES
     ('^GSPTSE', 'S&P/TSX Composite Index', 'Americas'),
     ('^BVSP', 'IBOVESPA', 'Americas'),
     ('^MXX', 'IPC MEXICO', 'Americas'),
-    ('^IPSA', 'S&P IPSA', 'Americas'),
     ('^MERV', 'MERVAL', 'Americas'),
     ('^TA125.TA', 'TA-125', 'Middle East'),
-    ('^CASE30', 'EGX 30 Price Return Index', 'Africa'),
     ('^JN0U.JO', 'Top 40 USD Net TRI Index', 'Africa'),
     ('DX-Y.NYB', 'US Dollar Index', 'Currency'),
     ('^125904-USD-STRD', 'MSCI EUROPE', 'Europe'),
@@ -91,7 +88,6 @@ ON CONFLICT (symbol) DO NOTHING;
 -- ══════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS index_price (
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ticker        TEXT NOT NULL,
     business_date DATE NOT NULL,
     open          DECIMAL(12,4),
@@ -99,11 +95,11 @@ CREATE TABLE IF NOT EXISTS index_price (
     low           DECIMAL(12,4),
     close         DECIMAL(12,4),
     volume        BIGINT,
-    adj_close     DECIMAL(12,4)
-);
+    adj_close     DECIMAL(12,4),
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_index_price_ticker_date
-    ON index_price (ticker, business_date);
+    CONSTRAINT index_price_pkey
+        PRIMARY KEY (ticker, business_date)
+);
 
 CREATE INDEX IF NOT EXISTS idx_index_price_ticker_date_desc
     ON index_price (ticker, business_date DESC);
