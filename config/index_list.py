@@ -6,14 +6,14 @@ This file is the single source of truth for which indices the pipeline
 scrapes. Hand-edit INDEX_LIST to add or remove an index.
 
 FLOW:
-  index_list.py  →  synced into the `index_list` Supabase table each run
+  index_list.py  →  synced into the `yf_index_list` Supabase table each run
                     (IndexTracker.sync — upserts present rows, soft-deletes
                      symbols no longer here)  →  pipeline scrapes Yahoo for
-                    every active row  →  index_price / index_return.
+                    every active row  →  yf_index_price / yf_index_return.
 
 SYMBOLS:
   `symbol` is the native Yahoo Finance ticker (e.g. '^GSPC'), stored verbatim
-  and used as the primary key across index_list / index_price / index_return.
+  and used as the primary key across yf_index_list / yf_index_price / yf_index_return.
   yfinance accepts these directly — no canonical/vendor mapping involved.
 
   Seeded from Yahoo Finance → Markets → World Indices.

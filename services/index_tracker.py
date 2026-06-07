@@ -1,5 +1,5 @@
 """
-Index Tracker — syncs the gold-source repo file into the index_list table.
+Index Tracker — syncs the gold-source repo file into the yf_index_list table.
 
 config/index_list.py is the source of truth. Each run: upsert its rows,
 soft-delete (is_active=false) symbols no longer present, reactivate symbols
@@ -21,7 +21,7 @@ class IndexTracker:
         self._supabase = supabase
 
     def sync(self) -> dict:
-        """Sync config/index_list.py into index_list (upsert + soft-delete)."""
+        """Sync config/index_list.py into yf_index_list (upsert + soft-delete)."""
         file_symbols = {row["symbol"] for row in INDEX_LIST}
         db_rows = self._supabase.get_index_list()
 
@@ -38,9 +38,9 @@ class IndexTracker:
 
         if removed:
             self._supabase.mark_removed_index_symbols(list(removed), removed_at=now)
-            logger.info(f"  Soft-deleted from index_list: {sorted(removed)}")
+            logger.info(f"  Soft-deleted from yf_index_list: {sorted(removed)}")
 
-        logger.info(f"  index_list synced: {len(file_symbols)} active symbols")
+        logger.info(f"  yf_index_list synced: {len(file_symbols)} active symbols")
         return {"active": sorted(file_symbols), "removed": sorted(removed)}
 
     def get_active_symbols(self) -> list[str]:

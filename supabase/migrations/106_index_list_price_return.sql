@@ -5,13 +5,13 @@
 --
 -- Three tables, mirroring the stock side:
 --
---   1. index_list    — catalog of indices the pipeline scrapes. The REPO FILE
+--   1. yf_index_list    — catalog of indices the pipeline scrapes. The REPO FILE
 --                       config/index_list.py is the gold source; IndexTracker
 --                       syncs it here each run (upsert + soft-delete). The
 --                       pipeline scrapes only rows WHERE is_active.
 --
---   2. index_price   — daily OHLCV, column-for-column copy of stock_price.
---   3. index_return  — daily simple returns, column-for-column copy of
+--   2. yf_index_price   — daily OHLCV, column-for-column copy of stock_price.
+--   3. yf_index_return  — daily simple returns, column-for-column copy of
 --                       stock_return.
 --
 -- `ticker` / `symbol` holds the native Yahoo symbol (e.g. '^GSPC'), used as
@@ -20,10 +20,10 @@
 
 
 -- ══════════════════════════════════════════════════════════════
--- 1. index_list — synced from config/index_list.py each run
+-- 1. yf_index_list — synced from config/index_list.py each run
 -- ══════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS index_list (
+CREATE TABLE IF NOT EXISTS yf_index_list (
     symbol      TEXT PRIMARY KEY,                 -- native Yahoo symbol (e.g. '^GSPC')
     name        TEXT NOT NULL,                    -- full name (e.g. 'S&P 500')
     region      TEXT,                             -- e.g. 'US', 'Europe'
@@ -32,16 +32,16 @@ CREATE TABLE IF NOT EXISTS index_list (
     removed_at  TIMESTAMPTZ
 );
 
-GRANT SELECT ON index_list TO anon, authenticated;
+GRANT SELECT ON yf_index_list TO anon, authenticated;
 
-ALTER TABLE index_list ENABLE ROW LEVEL SECURITY;
+ALTER TABLE yf_index_list ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "index_list_read_all" ON index_list;
-CREATE POLICY "index_list_read_all" ON index_list
+DROP POLICY IF EXISTS "yf_index_list_read_all" ON yf_index_list;
+CREATE POLICY "yf_index_list_read_all" ON yf_index_list
     FOR SELECT USING (TRUE);
 
 -- Seed the starting set (keep in sync with config/index_list.py).
-INSERT INTO index_list (symbol, name, region) VALUES
+INSERT INTO yf_index_list (symbol, name, region) VALUES
     ('^GSPC', 'S&P 500', 'US'),
     ('^DJI', 'Dow Jones Industrial Average', 'US'),
     ('^IXIC', 'NASDAQ Composite', 'US'),
@@ -84,10 +84,10 @@ ON CONFLICT (symbol) DO NOTHING;
 
 
 -- ══════════════════════════════════════════════════════════════
--- 2. index_price — mirrors stock_price
+-- 2. yf_index_price — mirrors stock_price
 -- ══════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS index_price (
+CREATE TABLE IF NOT EXISTS yf_index_price (
     ticker        TEXT NOT NULL,
     business_date DATE NOT NULL,
     open          DECIMAL(12,4),
@@ -97,43 +97,43 @@ CREATE TABLE IF NOT EXISTS index_price (
     volume        BIGINT,
     adj_close     DECIMAL(12,4),
 
-    CONSTRAINT index_price_pkey
+    CONSTRAINT yf_index_price_pkey
         PRIMARY KEY (ticker, business_date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_index_price_ticker_date_desc
-    ON index_price (ticker, business_date DESC);
+CREATE INDEX IF NOT EXISTS idx_yf_index_price_ticker_date_desc
+    ON yf_index_price (ticker, business_date DESC);
 
-ALTER TABLE index_price ENABLE ROW LEVEL SECURITY;
+ALTER TABLE yf_index_price ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "index_price_read_all" ON index_price;
-CREATE POLICY "index_price_read_all" ON index_price
+DROP POLICY IF EXISTS "yf_index_price_read_all" ON yf_index_price;
+CREATE POLICY "yf_index_price_read_all" ON yf_index_price
     FOR SELECT USING (TRUE);
 
 
 -- ══════════════════════════════════════════════════════════════
--- 3. index_return — mirrors stock_return
+-- 3. yf_index_return — mirrors stock_return
 -- ══════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS index_return (
+CREATE TABLE IF NOT EXISTS yf_index_return (
     ticker          TEXT           NOT NULL,
     business_date   DATE           NOT NULL,
     daily_return    NUMERIC(10, 6) NULL,
     reference_price DECIMAL(12, 4) NULL,
     computed_at     TIMESTAMPTZ    NULL DEFAULT NOW(),
 
-    CONSTRAINT index_return_pkey
+    CONSTRAINT yf_index_return_pkey
         PRIMARY KEY (ticker, business_date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_index_return_ticker_date
-    ON index_return (ticker, business_date DESC);
+CREATE INDEX IF NOT EXISTS idx_yf_index_return_ticker_date
+    ON yf_index_return (ticker, business_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_index_return_date
-    ON index_return (business_date);
+CREATE INDEX IF NOT EXISTS idx_yf_index_return_date
+    ON yf_index_return (business_date);
 
-ALTER TABLE index_return ENABLE ROW LEVEL SECURITY;
+ALTER TABLE yf_index_return ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "index_return_read_all" ON index_return;
-CREATE POLICY "index_return_read_all" ON index_return
+DROP POLICY IF EXISTS "yf_index_return_read_all" ON yf_index_return;
+CREATE POLICY "yf_index_return_read_all" ON yf_index_return
     FOR SELECT USING (TRUE);

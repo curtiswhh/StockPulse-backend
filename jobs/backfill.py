@@ -297,8 +297,8 @@ class BackfillJob:
         logger.info(f"Correlation computation complete — {len(all_prices)} tickers processed.")
 
     # ══════════════════════════════════════════════════════════
-    # INDICES (yfinance scrape → index_price / index_return)
-    # Driven by the index_list table (gold source: config/index_list.py)
+    # INDICES (yfinance scrape → yf_index_price / yf_index_return)
+    # Driven by the yf_index_list table (gold source: config/index_list.py)
     # ══════════════════════════════════════════════════════════
 
     async def fetch_and_compute_index(self, ticker: str):
@@ -332,7 +332,7 @@ class BackfillJob:
         await self.compute_index_returns(ticker)
 
     async def fetch_and_compute_index_all(self):
-        """Fetch prices + compute returns for ALL active symbols in index_list.
+        """Fetch prices + compute returns for ALL active symbols in yf_index_list.
         CLI: python main.py --fetch-and-compute-index-all"""
         symbols = self.supabase.get_active_index_symbols()
         logger.info(f"[fetch-and-compute-index-all] Processing {len(symbols)} indices: {symbols}")
@@ -342,7 +342,7 @@ class BackfillJob:
         logger.info(f"Index fetch + returns complete — {len(symbols)} indices processed.")
 
     async def compute_index_returns(self, ticker: str):
-        """Compute daily returns for ONE index from existing index_price data."""
+        """Compute daily returns for ONE index from existing yf_index_price data."""
         if self.return_engine is None:
             logger.error("ReturnEngine not provided — cannot compute index returns")
             return
@@ -353,7 +353,7 @@ class BackfillJob:
         rows = self.return_engine.compute_daily_returns(ticker=ticker, prices=prices)
         if rows:
             self.supabase.upsert_index_returns(rows)
-            logger.info(f"  {ticker}: upserted {len(rows)} index_return rows")
+            logger.info(f"  {ticker}: upserted {len(rows)} yf_index_return rows")
 
     async def compute_index_returns_all(self):
         """Compute daily returns for ALL active indices from existing data.

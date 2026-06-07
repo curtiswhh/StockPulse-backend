@@ -21,8 +21,8 @@ WHAT THE PIPELINE DOES FOR EACH TICKER:
   Step 6: Compute rolling VaR and upsert to stock_var
   Step 7: Compute rolling per-stock volatility and upsert to stock_volatility
   Step 8: Compute rolling pairwise correlations and upsert to stock_correlation
-  Step 9: Sync index_list from config/index_list.py, then scrape index prices
-          and returns into index_price / index_return (runs in TEST + PRODUCTION)
+  Step 9: Sync yf_index_list from config/index_list.py, then scrape index prices
+          and returns into yf_index_price / yf_index_return (runs in TEST + PRODUCTION)
 """
 
 import logging
@@ -123,7 +123,7 @@ class DailyPipeline:
         self._compute_correlations(tickers)
 
         # ── Step 9: Indices (sync list → scrape price + returns) ──
-        logger.info("Step 9/9: Syncing index_list and scraping index prices/returns...")
+        logger.info("Step 9/9: Syncing yf_index_list and scraping index prices/returns...")
         await self._run_indices()
 
         logger.info(f"═══ Daily Pipeline Complete ({mode} MODE) ═══")
@@ -267,7 +267,7 @@ class DailyPipeline:
                 self.supabase.upsert_global_correlations(corr_rows)
 
     async def _run_indices(self):
-        """Sync index_list from the repo file, then scrape price + returns
+        """Sync yf_index_list from the repo file, then scrape price + returns
         for every active index. Runs in both TEST and PRODUCTION mode."""
         from jobs.backfill import BackfillJob
 
