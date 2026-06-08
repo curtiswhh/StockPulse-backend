@@ -114,18 +114,23 @@ async function readAllCached(tickers: string[]): Promise<Record<string, MarketQu
   return out;
 }
 
-/// Background refresh: Polygon snapshot + warmup + fuse + upsert. Same
-/// pipeline as before, just no longer gating the response. If this fails or
-/// drops tickers, the next call still serves the existing `quote_cache`
-/// rows — no UI impact. iOS sees fresher data on the call after this one
-/// finishes writing.
-async function refreshInBackground(tickers: string[]): Promise<void> {
-  if (tickers.length === 0) return;
+/// Polygon snapshot + warmup + fuse + upsert. Returns the freshly fused
+/// DTOs keyed by ticker so callers can serve them in the same response.
+/// When `forceCache` is true (cold/missing tickers) the aggregate warmup
+/// runs for every ticker, guaranteeing the reset-window fallback has T-2
+/// closes on this same pass — otherwise a never-seen ticker fuses to null
+/// and no row is ever written. If this fails or drops tickers, the next
+/// call still serves existing `quote_cache` rows — no UI impact.
+async function refreshQuotes(
+  tickers: string[],
+  forceCache = false,
+): Promise<Record<string, MarketQuoteDTO>> {
+  if (tickers.length === 0) return {};
 
   const snapshots = await fetchSnapshotsSafe(tickers);
   console.log(`[quotes] bg polygon snapshots=${Object.keys(snapshots).length}/${tickers.length}`);
 
-  const needCache = tickers.filter((t) => {
+  const needCache = forceCache ? tickers : tickers.filter((t) => {
     const snap = snapshots[t];
     if (!snap) return true;
     if (snapshotTodaysChange(snap) === null) return true;
@@ -144,10 +149,11 @@ async function refreshInBackground(tickers: string[]): Promise<void> {
   const prevCloses = needCache.length > 0 ? await fetchPrevCloses(needCache) : {};
 
   const fused: MarketQuoteDTO[] = [];
+  const out: Record<string, MarketQuoteDTO> = {};
   let nulls = 0;
   for (const ticker of tickers) {
     const dto = fuseQuote(ticker, snapshots[ticker] ?? null, prevCloses[ticker] ?? []);
-    if (dto) fused.push(dto);
+    if (dto) { fused.push(dto); out[ticker] = dto; }
     else nulls++;
   }
   console.log(`[quotes] bg fused=${fused.length} null=${nulls}`);
@@ -160,6 +166,7 @@ async function refreshInBackground(tickers: string[]): Promise<void> {
       console.error("[quotes] bg cache upsert failed:", e);
     }
   }
+  return out;
 }
 
 async function handleQuotes(tickers: string[], _force: boolean): Promise<Record<string, MarketQuoteDTO>> {
@@ -171,24 +178,27 @@ async function handleQuotes(tickers: string[], _force: boolean): Promise<Record<
   const cached = await readAllCached(tickers);
   console.log(`[quotes] served from cache: ${Object.keys(cached).length}/${tickers.length}`);
 
-  // PATH 1 (Polygon → cache). Gated by market state.
+  // PATH 1 (Polygon → cache).
   //
-  //   - open / extended: refresh every requested ticker in the background.
-  //     This is the standard live-data flow.
+  // Missing tickers (no quote_cache row) are refreshed SYNCHRONOUSLY with
+  // forceCache so the row is fused, written, AND served in this same
+  // response — a single call after an add now shows the price. Pre-market
+  // this surfaces yesterday's close via the aggregate fallback rather than
+  // returning nothing.
   //
-  //   - closed: do NOT touch Polygon for tickers that already have a
-  //     quote_cache row — there's nothing new to fetch. Only refresh tickers
-  //     that are missing from the cache entirely (e.g. user just added a
-  //     stock after-hours and there's no row yet). For those tickers, we
-  //     need Polygon and aggregate_cache populated so the row exists for
-  //     the user to read on the next call.
-  const tickersToRefresh =
-    state === "closed"
-      ? tickers.filter((t) => !(t in cached))
-      : tickers;
+  // Already-cached tickers refresh in the background: every requested
+  // ticker when open/extended (live updates), none when closed (nothing
+  // new to fetch).
+  const missing = tickers.filter((t) => !(t in cached));
+  const cachedExisting = tickers.filter((t) => t in cached);
 
-  if (tickersToRefresh.length > 0) {
-    refreshInBackground(tickersToRefresh).catch((e) => {
+  if (missing.length > 0) {
+    const fresh = await refreshQuotes(missing, true);
+    for (const [k, v] of Object.entries(fresh)) cached[k] = v;
+  }
+
+  if (state !== "closed" && cachedExisting.length > 0) {
+    refreshQuotes(cachedExisting).catch((e) => {
       console.error("[quotes] background refresh failed:", e);
     });
   }
