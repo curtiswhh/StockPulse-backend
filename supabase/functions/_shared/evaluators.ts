@@ -20,8 +20,9 @@
 // price_move_nd
 //   { type: "price_move_nd", direction: "up"|"down"|"any", pct: 10, days: 5 }
 //   Fires when the cumulative move from N business days ago to today meets
-//   `pct`. Reference price comes from `stock_price` at the resolved business
-//   date (N business days before today, looked up via `business_dates`).
+//   `pct`. Reference price comes from the cached daily bars
+//   (`polygon_aggregate_cache`) at the resolved business date (N business
+//   days before today, looked up via `business_dates`).
 //
 // Direction semantics (both types):
 //   "up"   → fires when actual_pct >= +abs(pct)
@@ -30,7 +31,9 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import { admin } from "./supabase_admin.ts";
-import { isIndex } from "./polygon.ts";
+import { warmAggregateCache } from "./quote_fusion.ts";
+
+const WARM_DAYS = 365;
 
 // ============================================================
 // Types
@@ -125,9 +128,9 @@ const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
 // price_move_nd — N business days cumulative change
 // ============================================================
 //
-// Reference = stock_price.close at the business date N days before today.
-// We resolve "N business days ago" via the `business_dates` table — the
-// canonical trading calendar already used by iOS and the Python pipeline.
+// Reference = the cached daily close at the business date N days before
+// today. We resolve "N business days ago" via the `business_dates` table —
+// the canonical trading calendar already used by iOS and the Python pipeline.
 //
 // Two queries per fired alert (one for the date, one for the close). Both
 // are indexed; combined cost is a few ms. /tick batches these naturally
@@ -162,11 +165,14 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
     return { fired: false };
   }
 
-  // Step 2: pull the close on that date. Indices have no stock_price rows,
-  // so resolve their reference from the cached daily bars instead.
-  const refPrice = isIndex(ticker)
-    ? await indexCloseOnDate(ticker, refDate)
-    : await stockCloseOnDate(ticker, refDate);
+  // Step 2: pull the close on that date from the cached daily bars. On a
+  // miss (e.g. a freshly-added alert whose ticker was never cached), warm
+  // it on the spot and retry once, so the alert is live the same minute.
+  let refPrice = await cachedCloseOnDate(ticker, refDate);
+  if (!refPrice || refPrice <= 0) {
+    await warmAggregateCache([ticker], WARM_DAYS);
+    refPrice = await cachedCloseOnDate(ticker, refDate);
+  }
   if (!refPrice || refPrice <= 0) return { fired: false };
 
   const movePct = ((ctx.currentPrice - refPrice) / refPrice) * 100;
@@ -187,25 +193,9 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
   };
 };
 
-/// Stock reference close on a business date, read from stock_price.
-async function stockCloseOnDate(ticker: string, refDate: string): Promise<number | undefined> {
-  const { data, error } = await admin()
-    .from("stock_price")
-    .select("close")
-    .eq("ticker", ticker)
-    .eq("business_date", refDate)
-    .maybeSingle();
-  if (error) {
-    console.error(`[evalPriceMoveNd] stock_price lookup failed for ${ticker} ${refDate}:`, error);
-    return undefined;
-  }
-  return data?.close as number | undefined;
-}
-
-/// Index reference close on a business date, read from the cached daily
-/// bars (indices have no stock_price rows). Matches the bar whose NY
-/// business date equals refDate.
-async function indexCloseOnDate(ticker: string, refDate: string): Promise<number | undefined> {
+/// Reference close on a business date for any ticker, read from the cached
+/// daily bars. Matches the bar whose NY business date equals refDate.
+async function cachedCloseOnDate(ticker: string, refDate: string): Promise<number | undefined> {
   const { data, error } = await admin()
     .from("polygon_aggregate_cache")
     .select("bars")

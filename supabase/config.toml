@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.aggregates]
 verify_jwt = false
+
+[functions.refresh_aggregate_cache]
+verify_jwt = false

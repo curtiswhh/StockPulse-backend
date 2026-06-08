@@ -205,13 +205,14 @@ async function dropStaleDayCloses(dtos: MarketQuoteDTO[]): Promise<MarketQuoteDT
   return dtos.filter((d) => !(d.priceSource === "dayClose" && storedTrade.has(d.ticker)));
 }
 
-/// Ensure aggregate_cache holds enough bars (≥T-2) for fuseQuote's
-/// reset-window fallback. Pre-checks existing rows and never narrows a
-/// wider cached window. Fans out per-ticker against Polygon aggregates.
-export async function warmAggregateCache(tickers: string[]): Promise<void> {
+/// Ensure aggregate_cache holds enough bars for callers. Defaults to a
+/// 10-day window (fuseQuote's reset-window fallback); the alert refresher
+/// passes 365 so the N-day evaluator can resolve any reference date.
+/// Pre-checks existing rows and never narrows a wider cached window.
+export async function warmAggregateCache(tickers: string[], lookbackDays = 10): Promise<void> {
   if (tickers.length === 0) return;
 
-  const targetFrom = isoDaysAgo(10);
+  const targetFrom = isoDaysAgo(lookbackDays);
   const targetTo = todayISO_NY();
   const AGG_TTL_MS = 24 * 60 * 60 * 1000;
 
