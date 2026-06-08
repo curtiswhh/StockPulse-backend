@@ -51,6 +51,8 @@ interface NotificationPayload {
   condition?: Record<string, unknown>;
   trigger_price?: number;
   reference_price?: number | null;
+  reference_date?: string | null;
+  reference_days_ago?: number | null;
   move_pct?: number | null;
   is_critical?: boolean;
 }
@@ -69,7 +71,7 @@ interface UserPushInfo {
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return preflight();
-  if (req.method !== "POST")    return errorResponse("Method not allowed", 405);
+  if (req.method !== "POST") return errorResponse("Method not allowed", 405);
 
   const startedAt = Date.now();
   const now = new Date();
@@ -215,9 +217,13 @@ function formatPayload(n: PendingNotification): { title: string; body: string; d
   const trigger = p.trigger_price?.toFixed(2) ?? "—";
   const ref = p.reference_price?.toFixed(2) ?? "—";
 
+  let body = `15 min ago $${trigger} · was $${ref}`;
+  const suffix = referenceSuffix(p.reference_days_ago, p.reference_date);
+  if (suffix) body += ` (${suffix})`;
+
   return {
     title: `${ticker} ${arrow} ${abs}%`,
-    body: `Now $${trigger} · was $${ref}`,
+    body,
     data: {
       notification_id: n.id,
       alert_id: p.alert_id,
@@ -225,6 +231,23 @@ function formatPayload(n: PendingNotification): { title: string; body: string; d
       type: "price_move",
     },
   };
+}
+
+/// Build "1 day ago · 5 June 2026" from the reference age + date. Returns
+/// empty when either piece is missing (older queued rows degrade cleanly).
+function referenceSuffix(daysAgo?: number | null, date?: string | null): string {
+  if (!daysAgo || !date) return "";
+  const unit = daysAgo === 1 ? "day" : "days";
+  return `${daysAgo} ${unit} ago · ${formatRefDate(date)}`;
+}
+
+/// "2026-06-05" → "5 June 2026". Parsed as UTC noon to avoid TZ drift.
+function formatRefDate(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  if (isNaN(d.getTime())) return isoDate;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC", day: "numeric", month: "long", year: "numeric",
+  }).format(d);
 }
 
 /// Apply the APNs result to the notification row. Updates stats + the

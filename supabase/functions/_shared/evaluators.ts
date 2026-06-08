@@ -64,6 +64,10 @@ export interface EvalResult {
   movePct?: number;
   /// Free-form evaluator output written to alert_fires.context for audit.
   context?: Record<string, unknown>;
+  /// Trading date of the reference price (YYYY-MM-DD), for the push body.
+  referenceDate?: string;
+  /// How many business days back the reference price is.
+  referenceDaysAgo?: number;
 }
 
 export type Evaluator = (
@@ -111,10 +115,13 @@ const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
   // to "previous close" without a separate query. Rounded to 4 decimals
   // for the audit row; the push body uses fewer.
   const prevClose = ctx.currentPrice / (1 + ctx.todaysChangePct / 100);
+  const refDate = await businessDateNDaysAgo(ctx.todayBusinessDate, 1);
   return {
     fired: true,
     referencePrice: Number(prevClose.toFixed(4)),
     movePct: ctx.todaysChangePct,
+    referenceDate: refDate,
+    referenceDaysAgo: 1,
     context: {
       type: "price_move_1d",
       direction,
@@ -146,20 +153,7 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
   if (typeof days !== "number" || !Number.isFinite(days) || days < 1) return { fired: false };
 
   // Step 1: resolve the business date N days before today.
-  const { data: bdRows, error: bdErr } = await admin()
-    .from("business_dates")
-    .select("business_date")
-    .eq("calendar_code", "US")
-    .lt("business_date", ctx.todayBusinessDate)
-    .order("business_date", { ascending: false })
-    .limit(1)
-    .range(days - 1, days - 1);  // 0-indexed OFFSET (N-1)
-
-  if (bdErr) {
-    console.error(`[evalPriceMoveNd] business_dates lookup failed for ${ticker}:`, bdErr);
-    return { fired: false };
-  }
-  const refDate = bdRows?.[0]?.business_date as string | undefined;
+  const refDate = await businessDateNDaysAgo(ctx.todayBusinessDate, days);
   if (!refDate) {
     // Not enough history in business_dates. Skip rather than fire.
     return { fired: false };
@@ -182,6 +176,8 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
     fired: true,
     referencePrice: refPrice,
     movePct: Number(movePct.toFixed(4)),
+    referenceDate: refDate,
+    referenceDaysAgo: days,
     context: {
       type: "price_move_nd",
       direction,
@@ -192,6 +188,22 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
     },
   };
 };
+
+/// Resolve the US business date `n` trading days before `today` (YYYY-MM-DD).
+async function businessDateNDaysAgo(today: string, n: number): Promise<string | undefined> {
+  const { data, error } = await admin()
+    .from("business_dates")
+    .select("business_date")
+    .eq("calendar_code", "US")
+    .lt("business_date", today)
+    .order("business_date", { ascending: false })
+    .range(n - 1, n - 1);  // 0-indexed OFFSET (N-1)
+  if (error) {
+    console.error(`[businessDateNDaysAgo] lookup failed:`, error);
+    return undefined;
+  }
+  return data?.[0]?.business_date as string | undefined;
+}
 
 /// Reference close on a business date for any ticker, read from the cached
 /// daily bars. Matches the bar whose NY business date equals refDate.

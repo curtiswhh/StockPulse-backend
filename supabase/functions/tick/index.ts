@@ -248,6 +248,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           condition: alert.condition,
           trigger_price: price,
           reference_price: result.referencePrice ?? null,
+          reference_date: result.referenceDate ?? null,
+          reference_days_ago: result.referenceDaysAgo ?? null,
           move_pct: result.movePct ?? null,
           is_critical: alert.is_critical,
         },
