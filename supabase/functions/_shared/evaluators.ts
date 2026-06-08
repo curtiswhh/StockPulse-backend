@@ -103,7 +103,7 @@ function meetsThreshold(
 // /tick will retry next minute. No fallback to stock_price here — the
 // 1-day eval is meant to be O(1).
 
-const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
+const evalPriceMove1d: Evaluator = async (ticker, condition, ctx) => {
   const direction = condition.direction as string;
   const pct = condition.pct as number | undefined;
   if (typeof pct !== "number" || !Number.isFinite(pct)) return { fired: false };
@@ -111,11 +111,18 @@ const evalPriceMove1d: Evaluator = async (_ticker, condition, ctx) => {
 
   if (!meetsThreshold(direction, ctx.todaysChangePct, pct)) return { fired: false };
 
-  // referencePrice = currentPrice / (1 + pct/100). Numerically equivalent
-  // to "previous close" without a separate query. Rounded to 4 decimals
-  // for the audit row; the push body uses fewer.
-  const prevClose = ctx.currentPrice / (1 + ctx.todaysChangePct / 100);
+  // Reference = the actual prior-day close from the cached daily bars. Warm
+  // the cache on a miss, then fall back to the snapshot-derived close so the
+  // alert still fires if the bar is genuinely unavailable.
   const refDate = await businessDateNDaysAgo(ctx.todayBusinessDate, 1);
+  const derivedClose = ctx.currentPrice / (1 + ctx.todaysChangePct / 100);
+  let prevClose = refDate ? await cachedCloseOnDate(ticker, refDate) : undefined;
+  if (!prevClose || prevClose <= 0) {
+    await warmAggregateCache([ticker], WARM_DAYS);
+    prevClose = refDate ? await cachedCloseOnDate(ticker, refDate) : undefined;
+  }
+  if (!prevClose || prevClose <= 0) prevClose = derivedClose;
+
   return {
     fired: true,
     referencePrice: Number(prevClose.toFixed(4)),
