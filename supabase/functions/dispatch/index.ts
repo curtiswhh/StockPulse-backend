@@ -117,26 +117,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ────────────────────────────────────────────────────────────────
     // 3. Count today's sent per user (for daily_cap enforcement).
-    //    "Today" = UTC. Bundling-aware: kind='single' AND kind='bundle'
-    //    both count; kind='bundled_into' (a status, not a kind) doesn't
-    //    apply here.
+    //    "Today" = UTC. One query for all users, tallied in TS, instead
+    //    of one count round-trip per user. PostgREST's default row cap
+    //    (1000) bounds the read; with ~10/day caps that's far above any
+    //    realistic same-day volume for one batch's users.
     // ────────────────────────────────────────────────────────────────
     const todayStart = new Date(now);
     todayStart.setUTCHours(0, 0, 0, 0);
 
     const sentTodayByUser = new Map<string, number>();
-    for (const uid of userIds) {
-      const { count, error: cErr } = await admin()
-        .from("user_notifications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", uid)
-        .eq("status", "sent")
-        .gte("sent_at", todayStart.toISOString());
-      if (cErr) {
-        console.warn(`[dispatch] count failed for user=${uid}:`, cErr.message);
-        sentTodayByUser.set(uid, 0);
-      } else {
-        sentTodayByUser.set(uid, count ?? 0);
+    const { data: sentRows, error: sentErr } = await admin()
+      .from("user_notifications")
+      .select("user_id")
+      .eq("status", "sent")
+      .gte("sent_at", todayStart.toISOString())
+      .in("user_id", userIds);
+    if (sentErr) {
+      console.warn(`[dispatch] sent-today read failed:`, sentErr.message);
+    } else {
+      for (const r of (sentRows ?? []) as Array<{ user_id: string }>) {
+        sentTodayByUser.set(r.user_id, (sentTodayByUser.get(r.user_id) ?? 0) + 1);
       }
     }
 

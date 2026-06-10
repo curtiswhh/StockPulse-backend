@@ -63,11 +63,25 @@ class SupabaseClient:
 
         THIS IS THE PRIMARY TICKER RESOLUTION METHOD.
         The daily pipeline and CLI "--all" commands use this to determine
-        which stocks to process. If a ticker has rows here, it gets included.
+        which stocks to process.
 
-        Uses pagination to handle tables with more than 1000 rows,
-        since Supabase caps responses at 1000 per request.
+        Uses the get_available_tickers() RPC (migration 011) — one request
+        for a DISTINCT instead of paginating the whole table. Falls back to
+        pagination if the RPC is unavailable (e.g. migration not applied).
         """
+        try:
+            resp = self._client.rpc("get_available_tickers").execute()
+            result = sorted({row["ticker"] for row in (resp.data or [])})
+            if result:
+                logger.info(f"Found {len(result)} distinct tickers via RPC")
+                return result
+            logger.warning("get_available_tickers RPC returned no rows — falling back to pagination")
+        except Exception as e:
+            logger.warning(f"get_available_tickers RPC failed ({e}) — falling back to pagination")
+        return self._get_tickers_paginated()
+
+    def _get_tickers_paginated(self) -> list[str]:
+        """Fallback: paginate stock_price (Supabase caps responses at 1000 rows)."""
         all_tickers: set[str] = set()
         page_size = 1000
         offset = 0
@@ -88,7 +102,7 @@ class SupabaseClient:
             offset += page_size
 
         result = sorted(all_tickers)
-        logger.info(f"Found {len(result)} distinct tickers in stock_price: {result}")
+        logger.info(f"Found {len(result)} distinct tickers via pagination")
         return result
 
     def get_latest_price_date(self, ticker: str) -> date | None:
