@@ -7,7 +7,7 @@
 // Pipeline per request:
 //   1. Read all requested tickers from `quote_cache`.
 //   2. Bucket into HIT (fresh under TTL) and MISS (stale or absent).
-//      `force: true` skips this and treats every ticker as MISS.
+//      `force` is accepted but ignored — the per-minute cron keeps the cache fresh.
 //   3. For MISS:
 //        a. Batch-call Polygon snapshot (one HTTP call up to 250 tickers).
 //        b. Identify the subset that will need `aggregate_cache` to fuse —
@@ -49,16 +49,21 @@ import {
 } from "../_shared/quote_fusion.ts";
 import { admin } from "../_shared/supabase_admin.ts";
 
+/// Keep the isolate alive until background work settles; no-ops in local dev.
+function waitUntil(promise: Promise<unknown>): void {
+  (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } })
+    .EdgeRuntime?.waitUntil(promise);
+}
+
 // MARK: - DTOs
 
 interface RequestBody {
   tickers?: string[];
-  /// When `true`, bypass the `quote_cache` HIT/MISS read entirely and treat
-  /// every requested ticker as a MISS — Polygon is called, the result is
-  /// upserted into `quote_cache`, and `fetched_at` is refreshed. The
-  /// response shape is unchanged. iOS sets this on pull-to-refresh so users
-  /// always see the work happen; the per-isolate Polygon batch + 1s open-
-  /// market TTL still prevent abuse.
+  /// Accepted for back-compat but intentionally a NO-OP. The per-minute
+  /// refresh_quote_cache cron keeps quote_cache current, and the Polygon
+  /// plan is 15-min delayed — a forced synchronous fetch would cost a
+  /// Polygon call and return the same data the cache already holds.
+  /// Remove from the iOS request body whenever convenient.
   force?: boolean;
 }
 
@@ -174,9 +179,15 @@ async function handleQuotes(tickers: string[], _force: boolean): Promise<Record<
   console.log(`[quotes] req tickers=${tickers.length} state=${state}`);
 
   // PATH 2 (cache → user). Unconditional. Read every requested ticker's
-  // row from quote_cache. Presence is the answer; freshness never gates.
+  // row from quote_cache. Presence is the answer; freshness never gates —
+  // the per-minute refresh_quote_cache cron keeps rows current, and the
+  // Polygon plan is 15-min delayed so a forced fetch would return the
+  // same data anyway.
   const cached = await readAllCached(tickers);
   console.log(`[quotes] served from cache: ${Object.keys(cached).length}/${tickers.length}`);
+
+  const missing = tickers.filter((t) => !(t in cached));
+  const cachedExisting = tickers.filter((t) => t in cached);
 
   // PATH 1 (Polygon → cache).
   //
@@ -188,19 +199,18 @@ async function handleQuotes(tickers: string[], _force: boolean): Promise<Record<
   //
   // Already-cached tickers refresh in the background: every requested
   // ticker when open/extended (live updates), none when closed (nothing
-  // new to fetch).
-  const missing = tickers.filter((t) => !(t in cached));
-  const cachedExisting = tickers.filter((t) => t in cached);
-
+  // new to fetch). waitUntil keeps the isolate alive past the response.
   if (missing.length > 0) {
     const fresh = await refreshQuotes(missing, true);
     for (const [k, v] of Object.entries(fresh)) cached[k] = v;
   }
 
   if (state !== "closed" && cachedExisting.length > 0) {
-    refreshQuotes(cachedExisting).catch((e) => {
-      console.error("[quotes] background refresh failed:", e);
-    });
+    waitUntil(
+      refreshQuotes(cachedExisting).catch((e) => {
+        console.error("[quotes] background refresh failed:", e);
+      }),
+    );
   }
 
   return cached;

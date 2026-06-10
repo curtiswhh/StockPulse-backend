@@ -32,6 +32,12 @@ import { errorResponse, jsonResponse, preflight } from "../_shared/cors.ts";
 import { fetchAggregates, AggregateBarDTO } from "../_shared/polygon.ts";
 import { admin } from "../_shared/supabase_admin.ts";
 
+/// Keep the isolate alive until background work settles; no-ops in local dev.
+function waitUntil(promise: Promise<unknown>): void {
+  (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } })
+    .EdgeRuntime?.waitUntil(promise);
+}
+
 interface RequestBody {
   ticker?: string;
   from?: string;
@@ -110,9 +116,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const stateLabel = force ? "FORCE"
     : !cached ? "MISS"
-    : !hasBars ? "EMPTY"
-    : !covers ? "PARTIAL"
-    : "STALE";
+      : !hasBars ? "EMPTY"
+        : !covers ? "PARTIAL"
+          : "STALE";
   console.log(`[aggregates] ${stateLabel} ${ticker} req=${from}→${to} fetch=${fetchFrom}→${fetchTo} adjusted=${adjusted}`);
 
   try {
@@ -122,9 +128,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // bars, write whatever we got (even if empty) so the next request can
     // route through the EMPTY branch and retry.
     if (bars.length > 0 || !hasBars) {
-      upsertCache(ticker, fetchFrom, fetchTo, adjusted, bars)
-        .then(() => console.log(`[aggregates] upserted ${ticker} ${fetchFrom}→${fetchTo} bars=${bars.length}`))
-        .catch((e) => console.error(`[aggregates] upsert failed for ${ticker}:`, e));
+      waitUntil(
+        upsertCache(ticker, fetchFrom, fetchTo, adjusted, bars)
+          .then(() => console.log(`[aggregates] upserted ${ticker} ${fetchFrom}→${fetchTo} bars=${bars.length}`))
+          .catch((e) => console.error(`[aggregates] upsert failed for ${ticker}:`, e)),
+      );
     } else {
       console.log(`[aggregates] declined to overwrite populated row with 0 bars for ${ticker}`);
     }
