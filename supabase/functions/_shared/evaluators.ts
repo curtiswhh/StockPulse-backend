@@ -197,7 +197,18 @@ const evalPriceMoveNd: Evaluator = async (ticker, condition, ctx) => {
 };
 
 /// Resolve the US business date `n` trading days before `today` (YYYY-MM-DD).
+/// Memoized per (today, n): the answer is identical for every alert sharing
+/// the same window in a tick, and past business dates never change, so a
+/// warm isolate reuses entries across ticks too. Keying by `today` rolls
+/// the cache naturally at the NY day boundary. Failures and "not enough
+/// history" are NOT cached, so transient errors and backfills self-heal.
+const businessDateCache = new Map<string, string>();
+
 async function businessDateNDaysAgo(today: string, n: number): Promise<string | undefined> {
+  const key = `${today}:${n}`;
+  const hit = businessDateCache.get(key);
+  if (hit) return hit;
+
   const { data, error } = await admin()
     .from("business_dates")
     .select("business_date")
@@ -209,7 +220,12 @@ async function businessDateNDaysAgo(today: string, n: number): Promise<string | 
     console.error(`[businessDateNDaysAgo] lookup failed:`, error);
     return undefined;
   }
-  return data?.[0]?.business_date as string | undefined;
+  const date = data?.[0]?.business_date as string | undefined;
+  if (date) {
+    if (businessDateCache.size > 256) businessDateCache.clear();
+    businessDateCache.set(key, date);
+  }
+  return date;
 }
 
 /// Reference close on a business date for any ticker, read from the cached
