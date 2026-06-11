@@ -11,7 +11,7 @@ Changes from previous version:
 import csv
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -99,7 +99,7 @@ class SP500Tracker:
         """
         reader = csv.DictReader(io.StringIO(text))
         constituents: list[dict] = []
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         for row in reader:
             ticker = row.get("Symbol", "").strip().replace(".", "-")

@@ -20,3 +20,12 @@ verify_jwt = false
 
 [functions.refresh_aggregate_cache]
 verify_jwt = false
+
+[functions.tick]
+verify_jwt = false
+
+[functions.dispatch]
+verify_jwt = false
+
+[functions.refresh_quote_cache]
+verify_jwt = false

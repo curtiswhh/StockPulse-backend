@@ -8,7 +8,7 @@ than a remote CSV.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config.index_list import INDEX_LIST
 from services.supabase_client import SupabaseClient
@@ -28,7 +28,7 @@ class IndexTracker:
         db_active = {r["symbol"] for r in db_rows if r.get("is_active", True)}
         removed = db_active - file_symbols
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         rows_to_upsert = [
             {"symbol": r["symbol"], "name": r["name"], "region": r.get("region"),
              "is_active": True, "removed_at": None}

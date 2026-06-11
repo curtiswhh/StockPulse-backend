@@ -64,17 +64,6 @@ class Settings:
     var_lookback_days: int = 252                # 1-year rolling lookback
     var_max_backfill_days: int = 1000           # fetch 1000 days of price data
 
-    # Legacy settings kept for compatibility
-    var_confidence_start: float = 0.800
-    var_confidence_end: float = 0.999
-
-    @property
-    def var_confidence_step(self) -> float:
-        return 0.01 if self.test_mode else 0.001
-
-    var_lookback_windows: tuple = (252,)
-    var_max_lookback_days: int = 1000
-
     # ── Pipeline Tuning ───────────────────────────────────────
     polygon_rate_limit_per_min: int = 5
     polygon_batch_size: int = 5
@@ -88,16 +77,6 @@ class Settings:
     sp500_wikipedia_url: str = (
         "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     )
-
-    @property
-    def var_confidence_levels(self) -> list[float]:
-        levels = []
-        c = self.var_confidence_start
-        step = self.var_confidence_step
-        while c <= self.var_confidence_end + 1e-9:
-            levels.append(round(c, 3))
-            c += step
-        return levels
 
     def describe(self) -> str:
         mode = "TEST" if self.test_mode else "PRODUCTION"

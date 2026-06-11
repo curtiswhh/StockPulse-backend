@@ -16,7 +16,7 @@ Table name mapping (as of migration 009):
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from supabase import create_client, Client
@@ -51,7 +51,7 @@ class SupabaseClient:
         if not removed_tickers:
             return
         self._client.table("stock_sp500_constituents").update(
-            {"is_active": False, "removed_at": datetime.utcnow().isoformat()}
+            {"is_active": False, "removed_at": datetime.now(timezone.utc).isoformat()}
         ).in_("ticker", removed_tickers).execute()
         logger.info(f"Marked {len(removed_tickers)} tickers as removed")
 

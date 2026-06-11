@@ -131,12 +131,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Filter at eval time by plan-allowed types. The DB trigger blocks new
     // inserts that don't match the plan, but a tier downgrade after an
     // alert was created could leave a stale row. Skip rather than fire.
+    // Semantics match the trigger (017): a MISSING allowed_condition_types
+    // means "allow all"; a present array (even empty) is a strict whitelist.
     const planLimits = await loadPlanLimits();
     const eligibleAlerts = alerts.filter((a) => {
       const tier = a.users?.subscription_tier ?? "free";
-      const allowed = planLimits.get(tier)?.allowed_condition_types ?? [];
+      const allowed = planLimits.get(tier)?.allowed_condition_types;
       const condType = a.condition?.type as string;
-      return allowed.length === 0 || allowed.includes(condType);
+      return allowed == null || allowed.includes(condType);
     });
 
     // ────────────────────────────────────────────────────────────────

@@ -19,15 +19,14 @@ Output rows match the global_correlations table schema.
 
 NOTE ON PAIR ORDERING:
   The global_correlations table enforces ticker_a < ticker_b using
-  PostgreSQL's default text comparison (C locale / byte ordering).
-  Python's str < operator uses Unicode codepoint ordering which can
-  differ for special characters like ^ (used in ^GSPC).
-  We use .encode('utf-8') comparison to match PostgreSQL's C locale
-  byte ordering, ensuring the CHECK constraint is always satisfied.
+  PostgreSQL's C collation (byte ordering). Python's str < operator
+  compares Unicode codepoints, which is identical to C-collation byte
+  ordering for ASCII strings — and all our tickers (including ^GSPC,
+  since ^ is ASCII 0x5E) are ASCII. So a plain `<` is sufficient.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -114,7 +113,7 @@ class CorrelationEngine:
 
         # ── Rolling correlation for each pair ──────────────────────
         results: list[dict] = []
-        now_iso = datetime.utcnow().isoformat() + "Z"
+        now_iso = datetime.now(timezone.utc).isoformat()
         pairs_computed = 0
 
         for i in range(len(valid_tickers)):

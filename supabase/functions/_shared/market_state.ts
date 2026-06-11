@@ -46,18 +46,3 @@ export function marketState(at: Date = new Date()): MarketState {
   if (hm >= close && hm < afterClose) return "extended";
   return "closed";
 }
-
-/// Quote cache TTL by market state. The /quotes function reads this.
-///
-///   open      → 60s    — live prices move every few seconds
-///   extended  → 5 min  — thin volume, big lulls
-///   closed    → 6 hours — Polygon snapshot equals settled close
-///
-/// To change a TTL, edit this file and redeploy. No migration needed.
-export function quoteCacheTTLSeconds(state: MarketState): number {
-  switch (state) {
-    case "open":     return 1;
-    case "extended": return 300;
-    case "closed":   return 6 * 60 * 60;
-  }
-}

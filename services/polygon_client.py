@@ -57,29 +57,31 @@ class PolygonClient:
             "limit": 50000, "apiKey": self._api_key,
         }
 
+        # Lock guards only the rate-limit reservation; the HTTP request
+        # itself runs unlocked so future parallel callers aren't serialized.
         async with self._lock:
             await self._wait_for_rate_limit()
-            try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(url, params=params)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    for bar in data.get("results", []):
-                        bar_date = date.fromtimestamp(bar["t"] / 1000)
-                        all_rows.append({
-                            "ticker": ticker,
-                            "business_date": bar_date.isoformat(),
-                            "open": bar.get("o"),
-                            "high": bar.get("h"),
-                            "low": bar.get("l"),
-                            "close": bar.get("c"),
-                            "volume": int(bar["v"]) if bar.get("v") is not None else None,
-                            "adj_close": bar.get("c"),
-                        })
-                    logger.info(f"  {ticker}: fetched {len(all_rows)} bars from Polygon ({from_date} → {to_date})")
-            except httpx.HTTPStatusError as e:
-                logger.error(f"  {ticker}: Polygon HTTP {e.response.status_code}")
-            except Exception as e:
-                logger.error(f"  {ticker}: Polygon error — {e}")
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                for bar in data.get("results", []):
+                    bar_date = date.fromtimestamp(bar["t"] / 1000)
+                    all_rows.append({
+                        "ticker": ticker,
+                        "business_date": bar_date.isoformat(),
+                        "open": bar.get("o"),
+                        "high": bar.get("h"),
+                        "low": bar.get("l"),
+                        "close": bar.get("c"),
+                        "volume": int(bar["v"]) if bar.get("v") is not None else None,
+                        "adj_close": bar.get("c"),
+                    })
+                logger.info(f"  {ticker}: fetched {len(all_rows)} bars from Polygon ({from_date} → {to_date})")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"  {ticker}: Polygon HTTP {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"  {ticker}: Polygon error — {e}")
 
         return all_rows
