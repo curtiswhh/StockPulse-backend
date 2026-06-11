@@ -63,6 +63,7 @@ interface UserPushInfo {
   apns_env: "production" | "sandbox" | null;
   apns_bundle_id: string | null;
   daily_cap: number;
+  push_enabled: boolean;
 }
 
 // ============================================================
@@ -106,7 +107,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const userIds = [...new Set(queue.map((n) => n.user_id))];
     const { data: userRows, error: usersErr } = await admin()
       .from("users")
-      .select("id, apns_token, apns_env, apns_bundle_id, daily_cap")
+      .select("id, apns_token, apns_env, apns_bundle_id, daily_cap, push_enabled")
       .in("id", userIds);
     if (usersErr) throw new Error(`users load failed: ${usersErr.message}`);
 
@@ -117,26 +118,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // ────────────────────────────────────────────────────────────────
     // 3. Count today's sent per user (for daily_cap enforcement).
-    //    "Today" = UTC. One query for all users, tallied in TS, instead
-    //    of one count round-trip per user. PostgREST's default row cap
-    //    (1000) bounds the read; with ~10/day caps that's far above any
-    //    realistic same-day volume for one batch's users.
+    //    "Today" = UTC. Bundling-aware: kind='single' AND kind='bundle'
+    //    both count; kind='bundled_into' (a status, not a kind) doesn't
+    //    apply here.
     // ────────────────────────────────────────────────────────────────
     const todayStart = new Date(now);
     todayStart.setUTCHours(0, 0, 0, 0);
 
     const sentTodayByUser = new Map<string, number>();
-    const { data: sentRows, error: sentErr } = await admin()
-      .from("user_notifications")
-      .select("user_id")
-      .eq("status", "sent")
-      .gte("sent_at", todayStart.toISOString())
-      .in("user_id", userIds);
-    if (sentErr) {
-      console.warn(`[dispatch] sent-today read failed:`, sentErr.message);
-    } else {
-      for (const r of (sentRows ?? []) as Array<{ user_id: string }>) {
-        sentTodayByUser.set(r.user_id, (sentTodayByUser.get(r.user_id) ?? 0) + 1);
+    for (const uid of userIds) {
+      const { count, error: cErr } = await admin()
+        .from("user_notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", uid)
+        .eq("status", "sent")
+        .gte("sent_at", todayStart.toISOString());
+      if (cErr) {
+        console.warn(`[dispatch] count failed for user=${uid}:`, cErr.message);
+        sentTodayByUser.set(uid, 0);
+      } else {
+        sentTodayByUser.set(uid, count ?? 0);
       }
     }
 
@@ -151,6 +152,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // 4a. No user row, or no token → drop with reason.
       if (!u) {
         await markDropped(n.id, "no_user_row");
+        stats.dropped++;
+        continue;
+      }
+      if (u.push_enabled === false) {
+        await markDropped(n.id, "push_disabled");
         stats.dropped++;
         continue;
       }
