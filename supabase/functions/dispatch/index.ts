@@ -64,6 +64,10 @@ interface UserPushInfo {
   apns_bundle_id: string | null;
   daily_cap: number;
   push_enabled: boolean;
+  timezone: string;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
 }
 
 // ============================================================
@@ -107,7 +111,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const userIds = [...new Set(queue.map((n) => n.user_id))];
     const { data: userRows, error: usersErr } = await admin()
       .from("users")
-      .select("id, apns_token, apns_env, apns_bundle_id, daily_cap, push_enabled")
+      .select("id, apns_token, apns_env, apns_bundle_id, daily_cap, push_enabled, timezone, quiet_hours_enabled, quiet_hours_start, quiet_hours_end")
       .in("id", userIds);
     if (usersErr) throw new Error(`users load failed: ${usersErr.message}`);
 
@@ -144,7 +148,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // ────────────────────────────────────────────────────────────────
     // 4. Process each notification.
     // ────────────────────────────────────────────────────────────────
-    const stats = { sent: 0, dropped: 0, retried: 0, no_token: 0, over_cap: 0 };
+    const stats = { sent: 0, dropped: 0, retried: 0, no_token: 0, over_cap: 0, quiet_hours: 0 };
 
     for (const n of queue) {
       const u = userById.get(n.user_id);
@@ -178,7 +182,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
         continue;
       }
 
-      // 4c. Build + send the push.
+      // 4c. Quiet hours (non-critical only).
+      if (!isCritical && u.quiet_hours_enabled &&
+        isWithinQuietHours(now, u.timezone, u.quiet_hours_start, u.quiet_hours_end)) {
+        await markDropped(n.id, "quiet_hours");
+        stats.dropped++;
+        stats.quiet_hours++;
+        continue;
+      }
+
+      // 4d. Build + send the push.
       const apnsPayload = formatPayload(n);
       const result = await sendApns(u.apns_token, {
         ...apnsPayload,
@@ -198,6 +211,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       retried: stats.retried,
       no_token: stats.no_token,
       over_cap: stats.over_cap,
+      quiet_hours: stats.quiet_hours,
       duration_ms: Date.now() - startedAt,
     });
 
@@ -210,6 +224,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
 // ============================================================
 // Helpers
 // ============================================================
+
+/// True when the user's local time falls inside the quiet window. Handles
+/// windows crossing midnight (e.g. 22:00–07:00). Invalid tz/times → false.
+function isWithinQuietHours(now: Date, tz: string, start: string, end: string): boolean {
+  const s = parseMinutes(start);
+  const e = parseMinutes(end);
+  if (s === null || e === null || s === e) return false;
+  let local: number;
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(now);
+    const h = Number(parts.find((p) => p.type === "hour")?.value);
+    const m = Number(parts.find((p) => p.type === "minute")?.value);
+    if (isNaN(h) || isNaN(m)) return false;
+    local = h * 60 + m;
+  } catch {
+    return false;
+  }
+  return s < e ? local >= s && local < e : local >= s || local < e;
+}
+
+/// "22:00:00" or "22:00" → minutes since midnight; null if malformed.
+function parseMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(t ?? "");
+  if (!m) return null;
+  const mins = Number(m[1]) * 60 + Number(m[2]);
+  return mins >= 0 && mins < 1440 ? mins : null;
+}
 
 /// Build a user-facing push from a notification row's payload.
 function formatPayload(n: PendingNotification): { title: string; body: string; data: Record<string, unknown> } {
