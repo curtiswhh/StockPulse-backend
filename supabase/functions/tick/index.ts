@@ -9,6 +9,9 @@
 //   4. Upsert each (ticker, ts) into price_snapshots with price + return + vol.
 //   5. Run the evaluator registry per alert. Apply cooldown gate.
 //   6. Bulk-insert alert_fires + notifications. Bump last_fired_at.
+//   7. If any notifications were staged, invoke /dispatch immediately so
+//      pushes go out with this tick instead of waiting for the next
+//      dispatch cron run (~60s later). The cron remains the retry sweeper.
 //
 // Auth posture:
 //   The cron migration calls this with the service-role bearer (fetched from
@@ -281,6 +284,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (updErr) throw new Error(`alerts update failed: ${updErr.message}`);
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // 7. Send pushes now — don't wait for the dispatch cron
+    // ────────────────────────────────────────────────────────────────
+    let dispatchResult: Record<string, unknown> | null = null;
+    if (notifications.length > 0) {
+      dispatchResult = await invokeDispatch();
+    }
+
     return jsonResponse({
       ok: true,
       window: tickWindowLabel(now),
@@ -288,6 +299,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       alerts_skipped_tier: alerts.length - eligibleAlerts.length,
       tickers_priced: snapshotRows.length,
       fires: fires.length,
+      dispatch: dispatchResult,
       duration_ms: Date.now() - startedAt,
     });
 
@@ -298,6 +310,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
 });
 
 // MARK: - helpers
+
+/// Call /dispatch with the built-in service-role key. Failure is non-fatal:
+/// the row stays pending and the dispatch cron retries within a minute.
+async function invokeDispatch(): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/dispatch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+      body: "{}",
+    });
+    if (!res.ok) {
+      console.warn(`[tick] inline dispatch returned ${res.status}; cron will retry`);
+      return { ok: false, status: res.status };
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn("[tick] inline dispatch failed; cron will retry:", e);
+    return null;
+  }
+}
 
 /// Find today's business date from the first usable snapshot. Polygon
 /// timestamps land in NY business date via snapshotBusinessDateNY.
